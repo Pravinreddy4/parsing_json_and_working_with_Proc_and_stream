@@ -1,0 +1,86 @@
+--creating a ratings table and inserting after stream on it
+CREATE OR REPLACE TABLE
+  NETFLIX_RATING_EVENTS(
+    RAW_DATA VARIANT
+);
+INSERT INTO NETFLIX_RATING_EVENTS(RAW_DATA) SELECT PARSE_JSON(' { "show_id": 1, "rating": 10,"Movie" :''Pushpa'',"Genre":''Action Drama'' ,"Crew":["Sukumar","Sabu Senthil","Ram & Lakshman","Devi Sri Prasad"] ,"Cast":[{"Artist":''Allu Arjun'',"Character":''Puspa Raj''},{"Artist":''Rashmika Mandana'',"Character":''Srivalli''},{"Artist":''Sunil'',"Character":''Mangalam Sreenu''},{"Artist":''Fahad Fazil'',"Character":''Bhanwar Singh Shekhawat''}] } ');
+INSERT INTO NETFLIX_RATING_EVENTS(RAW_DATA) SELECT PARSE_JSON(' { "show_id": 2, "rating": 10,"Movie" :''Akhanda'',"Genre":''Action Drama'' ,"Crew":["Boyapati sreenu","Chota K Naidu","Ram & Lakshman","Thaman SS"] ,"Cast":[{"Artist":''Bala Krishna Nandamuri'',"Character":''Ghora''},{"Artist":''Pragya Jaiswal'',"Character":''Pragya''},{"Artist":''Srikhanth'',"Character":''Varada Raju''},{"Artist":''Jagapathi Babu'',"Character":''Swami''}] } ');
+INSERT INTO NETFLIX_RATING_EVENTS(RAW_DATA) SELECT PARSE_JSON(' { "show_id": 3, "rating": 9,"Movie" :''Valtair Veerayya'',"Genre":''Action Drama'' ,"Crew":["Bobby K","PS Vinod","Peter Hein","Devi Sri Prasad"] ,"Cast":[{"Artist":''Chiranjeevi Konidela'',"Character":''Veerayya''},{"Artist":''Sruti Hasan'',"Character":''Sridevi''},{"Artist":''Praksh Raj'',"Character":''Marcus''},{"Artist":''Ravi Teja'',"Character":''veera Shankar''}] } ');
+INSERT INTO NETFLIX_RATING_EVENTS(RAW_DATA) SELECT PARSE_JSON(' { "show_id": 4, "rating": 10,"Movie" :''Karthikeya 2'',"Genre":''Mythology Adenture'' ,"Crew":["Chandu Mondeti","SreeRam","Stunt Shiva","MM Karhikeya"] ,"Cast":[{"Artist":''Nikhil Siddarth'',"Character":''Karthikeya''},{"Artist":''Anupama Parameswaran'',"Character":''Radha''},{"Artist":''Jagan Reddy'',"Character":''Khaidi No.6093''},{"Artist":''Srinivas Reddy'',"Character":''Bhushanam''}] } ');
+
+select * from NETFLIX_RATING_EVENTS;
+select * from NETFLIX_RATING_EVENTS_stream;
+create or replace stream NETFLIX_RATING_EVENTS_Stream on table NETFLIX_RATING_EVENTS;
+
+--creating a parsed ratings table
+
+create or replace table Parsed_NETFLIX_RATING_EVENTS as 
+select RAW_DATA:Movie::string as Movie,
+RAW_DATA:Cast[0].Artist::string as Lead_Role,
+RAW_DATA:Cast[0].Character::string as M_Character_Name,
+RAW_DATA:Cast[1].Artist::string as Female_Role,
+RAW_DATA:Cast[1].Character::string as F_Character_Name,
+RAW_DATA:Cast[2].Artist::string as Opposite_Role,
+RAW_DATA:Cast[2].Character::string as Opp_Character_Name,
+RAW_DATA:Cast[3].Artist::string as Supportive_Role,
+RAW_DATA:Cast[3].Character::string as Supp_Character_Name,
+RAW_DATA:Genre::string as Genre,
+RAW_DATA:Crew [0]::string as Director,
+RAW_DATA:Crew[2]::string as stunts_by,
+RAW_DATA:Crew [3]::string as Music_Composer,
+RAW_DATA:show_id::string as Show_id,
+RAW_DATA:rating::string as Rating
+from NETFLIX_RATING_EVENTS
+
+select * from NETFLIX_RATING_EVENTS
+truncate table NETFLIX_RATING_EVENTS
+select * from Parsed_NETFLIX_RATING_EVENTS
+truncate table Parsed_NETFLIX_RATING_EVENTS;
+--creating a procedure to insert data into parsed table from tream
+create or replace Procedure Parsed_NETFLIX_RATING_EVENTS_Load_Proc()
+    returns string
+    language javascript
+    strict
+    execute as owner
+    as
+    $$
+    var sql_command = `Insert into Parsed_NETFLIX_RATING_EVENTS 
+    select RAW_DATA:Movie::string as Movie,
+RAW_DATA:Cast[0].Artist::string as Lead_Role,
+RAW_DATA:Cast[0].Character::string as M_Character_Name,
+RAW_DATA:Cast[1].Artist::string as Female_Role,
+RAW_DATA:Cast[1].Character::string as F_Character_Name,
+RAW_DATA:Cast[2].Artist::string as Opposite_Role,
+RAW_DATA:Cast[2].Character::string as Opp_Character_Name,
+RAW_DATA:Cast[3].Artist::string as Supportive_Role,
+RAW_DATA:Cast[3].Character::string as Supp_Character_Name,
+RAW_DATA:Genre::string as Genre,
+RAW_DATA:Crew [0]::string as Director,
+RAW_DATA:Crew[2]::string as stunts_by,
+RAW_DATA:Crew [3]::string as Music_Composer,
+RAW_DATA:show_id::string as Show_id,
+RAW_DATA:rating::string as Rating
+from NETFLIX_RATING_EVENTS_Stream 
+WHERE metadata$action = 'INSERT';`;
+    try {
+        snowflake.execute (
+            {sqlText: sql_command}
+            );
+        return "JSON extracted.";   // Return a success/error indicator.
+        }
+    catch (err)  {
+        return "Failed: " + err;   // Return a success/error indicator.
+        }
+    $$
+    ;
+
+call Parsed_NETFLIX_RATING_EVENTS_Load_Proc();
+
+select * from Parsed_NETFLIX_RATING_EVENTS ;
+
+--creating a task to call procedure when stream has data
+
+CREATE OR REPLACE TASK extract_json_data warehouse = COMPUTE_WH SCHEDULE = '1 minute' WHEN system$stream_has_data('NETFLIX_RATING_EVENTS_Stream') AS Call Parsed_NETFLIX_RATING_EVENTS_Load_Proc();
+Alter task extract_json_data resume;
+select * from Parsed_NETFLIX_RATING_EVENTS ;
+Alter task extract_json_data Suspend;
